@@ -913,6 +913,18 @@ export default function App() {
     const sessionId=params.get("session_id");
     const subscribedId=params.get("subscribed");
     const canceledId=params.get("checkout_canceled");
+    const previewCode=params.get("preview");
+
+    // OWNER TESTING UNLOCK — visit yoursite.com/?preview=learnhub2026
+    // to instantly unlock every course's AI Tutor for testing, with no
+    // payment and no Stripe checkout at all. Change "learnhub2026" to
+    // your own secret word below if you'd like. This is meant only for
+    // you to test with — don't share this link publicly.
+    if(previewCode==="learnhub2026"){
+      setOwned(new Set(ALL.map(c=>c.id)));
+      window.history.replaceState({},"",window.location.pathname);
+      return;
+    }
 
     if(sessionId){
       fetch(`/api/verify-session?session_id=${encodeURIComponent(sessionId)}`)
