@@ -285,9 +285,57 @@ function Stars({r,size=12}) {
 /* ══════════════════════════════════════════════
    COURSE CARD
 ══════════════════════════════════════════════ */
-function Card({c,onBuy,owned,delay=0,onTutor}) {
+function Card({c,onBuy,owned,delay=0,onTutor,inTrial,canTrial,onTrial,trialActive,trialDaysLeft}) {
   const cat=CATS.find(x=>x.id===c.cat);
   const [hov,setHov]=useState(false);
+  const isUnlocked=owned||inTrial;
+
+  // Decide price badge in banner
+  const priceBadge=inTrial
+    ? {bg:"#f59e0b",text:"FREE TRIAL"}
+    : canTrial
+      ? {bg:"#16a34a",text:"7-Day Free"}
+      : {bg:"#16a34a",text:"$5/mo"};
+
+  // Decide footer action
+  let footerLeft, footerBtn;
+  if(isUnlocked){
+    footerLeft=<span style={{fontSize:12,fontWeight:700,color:inTrial?"#f59e0b":"#16a34a"}}>
+      {inTrial?"🎁 Trial":"✓ Subscribed"}
+    </span>;
+    footerBtn=<button onClick={()=>onTutor(c)} style={{
+      background:`linear-gradient(135deg,${cat.color},${cat.color}cc)`,
+      color:"white",border:"none",borderRadius:9,
+      padding:"7px 12px",fontSize:12,fontWeight:800,cursor:"pointer",
+      display:"flex",alignItems:"center",gap:4,
+      boxShadow:hov?`0 4px 14px ${cat.color}55`:"none",transition:"box-shadow .2s",
+    }}>💬 Open Tutor</button>;
+  } else if(canTrial){
+    footerLeft=<div>
+      <span style={{fontSize:15,fontWeight:900,color:"#f59e0b"}}>FREE</span>
+      <span style={{fontSize:10,color:"#94a3b8",marginLeft:3}}>7 days</span>
+    </div>;
+    footerBtn=<button onClick={()=>onTrial(c)} style={{
+      background:"linear-gradient(135deg,#f59e0b,#d97706)",
+      color:"white",border:"none",borderRadius:9,padding:"7px 12px",
+      fontSize:12,fontWeight:800,cursor:"pointer",
+      boxShadow:hov?"0 4px 16px rgba(245,158,11,.5)":"none",
+      transition:"box-shadow .2s",
+    }}>🎁 Try Free</button>;
+  } else {
+    footerLeft=<div>
+      <span style={{fontSize:18,fontWeight:900,color:"#16a34a"}}>$5</span>
+      <span style={{fontSize:11,color:"#94a3b8",marginLeft:3}}>/mo</span>
+    </div>;
+    footerBtn=<button onClick={()=>onBuy(c)} style={{
+      background:`linear-gradient(135deg,${cat.color},${cat.color}cc)`,
+      color:"white",border:"none",borderRadius:9,padding:"7px 12px",
+      fontSize:12,fontWeight:800,cursor:"pointer",
+      boxShadow:hov?`0 4px 16px ${cat.color}55`:"none",
+      transition:"box-shadow .2s",
+    }}>💬 Subscribe</button>;
+  }
+
   return (
     <div
       className="card-anim"
@@ -298,10 +346,10 @@ function Card({c,onBuy,owned,delay=0,onTutor}) {
         transform:hov?"translateY(-6px) scale(1.01)":"none",
         transition:"all .25s cubic-bezier(.34,1.56,.64,1)",
         display:"flex",flexDirection:"column",
-        border:`1.5px solid ${hov?cat.color+"44":"#f1f5f9"}`,
+        border:`1.5px solid ${isUnlocked?cat.color+"66":hov?cat.color+"44":"#f1f5f9"}`,
         animationDelay:`${delay}ms`,
       }}>
-      {/* Banner — unique per course */}
+      {/* Banner */}
       <div style={{
         position:"relative",overflow:"hidden",height:130,
         ...bannerStyle(c,cat),
@@ -334,9 +382,9 @@ function Card({c,onBuy,owned,delay=0,onTutor}) {
             fontSize:11,fontWeight:800,color:cat.color,
           }}>{cat.icon} {cat.label}</div>
           <div style={{
-            background:"#16a34a",color:"white",borderRadius:8,
-            padding:"3px 10px",fontSize:12,fontWeight:900,
-          }}>$5/mo</div>
+            background:priceBadge.bg,color:"white",borderRadius:8,
+            padding:"3px 10px",fontSize:11,fontWeight:900,
+          }}>{priceBadge.text}</div>
         </div>
       </div>
       {/* Body */}
@@ -365,26 +413,8 @@ function Card({c,onBuy,owned,delay=0,onTutor}) {
         borderTop:"1px solid #f1f5f9",
         display:"flex",alignItems:"center",justifyContent:"space-between",
       }}>
-        <div>
-          <span style={{fontSize:18,fontWeight:900,color:"#16a34a"}}>$5</span>
-          <span style={{fontSize:11,color:"#94a3b8",marginLeft:3}}>/mo</span>
-        </div>
-        {owned
-          ? <button onClick={()=>onTutor(c)} title="Ask AI Tutor" style={{
-              background:`linear-gradient(135deg,${cat.color},${cat.color}cc)`,
-              color:"white",border:"none",borderRadius:9,
-              padding:"7px 12px",fontSize:12,fontWeight:800,cursor:"pointer",
-              display:"flex",alignItems:"center",gap:4,
-              boxShadow:hov?`0 4px 14px ${cat.color}55`:"none",transition:"box-shadow .2s",
-            }}>💬 Open Tutor</button>
-          : <button onClick={()=>onBuy(c)} style={{
-              background:`linear-gradient(135deg,${cat.color},${cat.color}cc)`,
-              color:"white",border:"none",borderRadius:9,padding:"7px 12px",
-              fontSize:12,fontWeight:800,cursor:"pointer",
-              boxShadow:hov?`0 4px 16px ${cat.color}55`:"none",
-              transition:"box-shadow .2s",
-            }}>💬 Subscribe & Start</button>
-        }
+        {footerLeft}
+        {footerBtn}
       </div>
     </div>
   );
@@ -902,9 +932,45 @@ export default function App() {
   const [buying,setBuying]=useState(null);
   const [owned,setOwned]=useState(new Set());
   const [tutoring,setTutoring]=useState(null);
-  const [section,setSection]=useState("home"); // home | courses
-  const [subBanner,setSubBanner]=useState(null); // {title} | {error} | null
+  const [section,setSection]=useState("home");
+  const [subBanner,setSubBanner]=useState(null);
+  const [trial,setTrial]=useState(null); // {start:timestamp, courses:Set}
   const PER=24;
+  const TRIAL_DAYS=7;
+  const TRIAL_LIMIT=5;
+  const TRIAL_MS=TRIAL_DAYS*24*60*60*1000;
+
+  // Load or create trial from localStorage on first visit
+  useEffect(()=>{
+    try{
+      const saved=localStorage.getItem("learnhub_trial");
+      if(saved){
+        const p=JSON.parse(saved);
+        setTrial({start:p.start,courses:new Set(p.courses||[])});
+      }else{
+        const fresh={start:Date.now(),courses:[]};
+        localStorage.setItem("learnhub_trial",JSON.stringify(fresh));
+        setTrial({start:fresh.start,courses:new Set()});
+      }
+    }catch(e){
+      setTrial({start:Date.now(),courses:new Set()});
+    }
+  },[]);
+
+  // Trial helpers
+  const trialActive=trial&&(Date.now()-trial.start<TRIAL_MS);
+  const trialDaysLeft=trial?Math.max(0,Math.ceil((trial.start+TRIAL_MS-Date.now())/(24*60*60*1000))):0;
+  const trialCoursesUsed=trial?trial.courses.size:0;
+  const canTrial=trialActive&&trialCoursesUsed<TRIAL_LIMIT;
+
+  function addTrialCourse(course){
+    setTrial(t=>{
+      const nc=new Set([...t.courses,course.id]);
+      try{localStorage.setItem("learnhub_trial",JSON.stringify({start:t.start,courses:[...nc]}));}catch(e){}
+      return{...t,courses:nc};
+    });
+    setTutoring(course);
+  }
 
   // After returning from Stripe Checkout, confirm the subscription is
   // really active before unlocking the course. Cleans the URL afterward.
@@ -922,6 +988,8 @@ export default function App() {
     // you to test with — don't share this link publicly.
     if(previewCode==="learnhub2026"){
       setOwned(new Set(ALL.map(c=>c.id)));
+      // Also give a generous trial so banner shows correctly in preview mode
+      setTrial({start:Date.now(),courses:new Set()});
       window.history.replaceState({},"",window.location.pathname);
       return;
     }
@@ -1034,6 +1102,54 @@ export default function App() {
           </div>
         </div>
       </nav>
+
+      {/* ── TRIAL BANNER ──────────────────────────── */}
+      {trial && (
+        trialActive ? (
+          <div style={{
+            background:"linear-gradient(135deg,#f59e0b,#d97706)",
+            padding:"10px 20px",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            gap:16,flexWrap:"wrap",
+          }}>
+            <span style={{fontSize:16}}>🎁</span>
+            <span style={{color:"white",fontWeight:800,fontSize:14}}>
+              Free Trial: <strong>{trialDaysLeft} day{trialDaysLeft!==1?"s":""} left</strong>
+              {" · "}
+              <strong>{trialCoursesUsed}/{TRIAL_LIMIT}</strong> free courses used
+            </span>
+            {trialCoursesUsed>=TRIAL_LIMIT&&(
+              <span style={{
+                background:"rgba(255,255,255,.25)",color:"white",
+                padding:"4px 12px",borderRadius:20,fontSize:12,fontWeight:800,
+              }}>All 5 free slots used — subscribe to continue</span>
+            )}
+            <button onClick={()=>{setSection("courses");}} style={{
+              background:"white",color:"#d97706",border:"none",
+              borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:900,cursor:"pointer",
+            }}>Browse Courses →</button>
+          </div>
+        ) : (
+          <div style={{
+            background:"linear-gradient(135deg,#1e40af,#3b82f6)",
+            padding:"10px 20px",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            gap:16,flexWrap:"wrap",
+          }}>
+            <span style={{fontSize:16}}>⏰</span>
+            <span style={{color:"white",fontWeight:800,fontSize:14}}>
+              Your 7-day free trial has ended
+            </span>
+            <span style={{color:"rgba(255,255,255,.85)",fontSize:13}}>
+              Subscribe to any course for just $5/month to continue learning
+            </span>
+            <button onClick={()=>setSection("courses")} style={{
+              background:"white",color:"#1e40af",border:"none",
+              borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:900,cursor:"pointer",
+            }}>See All Courses →</button>
+          </div>
+        )
+      )}
 
       {/* ══════════════════════════════════════════════
          HOME PAGE
@@ -1495,7 +1611,9 @@ export default function App() {
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16}}>
             {topCourses.map((c,i)=>(
-              <Card key={c.id} c={c} onBuy={setBuying} owned={owned.has(c.id)} delay={i*60} onTutor={setTutoring}/>
+              <Card key={c.id} c={c} onBuy={setBuying} owned={owned.has(c.id)} delay={i*60} onTutor={setTutoring}
+                inTrial={trial&&trial.courses.has(c.id)} canTrial={canTrial&&!owned.has(c.id)&&!(trial&&trial.courses.has(c.id))}
+                onTrial={addTrialCourse} trialActive={trialActive} trialDaysLeft={trialDaysLeft}/>
             ))}
           </div>
         </div>
@@ -1755,7 +1873,9 @@ export default function App() {
             : <div style={{display:"grid",
                 gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16}}>
                 {pageItems.map((c,i)=>(
-                  <Card key={c.id} c={c} onBuy={setBuying} owned={owned.has(c.id)} delay={i*40} onTutor={setTutoring}/>
+                  <Card key={c.id} c={c} onBuy={setBuying} owned={owned.has(c.id)} delay={i*40} onTutor={setTutoring}
+                    inTrial={trial&&trial.courses.has(c.id)} canTrial={canTrial&&!owned.has(c.id)&&!(trial&&trial.courses.has(c.id))}
+                    onTrial={addTrialCourse} trialActive={trialActive} trialDaysLeft={trialDaysLeft}/>
                 ))}
               </div>
           }
