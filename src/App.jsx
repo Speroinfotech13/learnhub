@@ -309,7 +309,7 @@ function Card({c,onBuy,owned,delay=0,onTutor,inTrial,canTrial,onTrial,trialActiv
       padding:"7px 12px",fontSize:12,fontWeight:800,cursor:"pointer",
       display:"flex",alignItems:"center",gap:4,
       boxShadow:hov?`0 4px 14px ${cat.color}55`:"none",transition:"box-shadow .2s",
-    }}>💬 Open Tutor</button>;
+    }}>📖 Start Lesson</button>;
   } else if(canTrial){
     footerLeft=<div>
       <span style={{fontSize:15,fontWeight:900,color:"#f59e0b"}}>FREE</span>
@@ -549,7 +549,7 @@ function PayModal({c,onClose}) {
               boxShadow:`0 6px 20px ${cat.color}44`,
             }}>🔒 Continue to Secure Checkout</button>
             <div style={{display:"flex",justifyContent:"center",gap:16,marginTop:14,opacity:.55}}>
-              {["🔒 Stripe Secured","🔁 Cancel Anytime","💬 AI Tutor Ready"].map(t=>(
+              {["🔒 Stripe Secured","🔁 Cancel Anytime","📖 Instant Access"].map(t=>(
                 <span key={t} style={{fontSize:12,color:"#64748b",fontWeight:600}}>{t}</span>
               ))}
             </div>
@@ -586,340 +586,150 @@ function PayModal({c,onClose}) {
 }
 
 /* ══════════════════════════════════════════════
-   AI TUTOR CHAT MODAL — live Claude-powered tutor
-   with voice input (speech-to-text) & voice output (text-to-speech)
+   LESSON VIEWER MODAL — free, no API calls
+   Shows course steps with progress tracking
 ══════════════════════════════════════════════ */
-function cleanForSpeech(text){
-  return text
-    .replace(/\*\*(.*?)\*\*/g,"$1")
-    .replace(/\*(.*?)\*/g,"$1")
-    .replace(/#{1,6}\s/g,"")
-    .replace(/`{1,3}([^`]*?)`{1,3}/g,"$1")
-    .replace(/^[-•]\s+/gm,"")
-    .replace(/\n+/g," ")
-    .trim();
-}
-
-function TutorModal({c,onClose}) {
+function LessonModal({c,onClose}) {
   const cat=CATS.find(x=>x.id===c.cat);
-  const steps=Array.from({length:c.steps},(_,i)=>STEP_HEADS[i%STEP_HEADS.length]);
-  const [messages,setMessages]=useState([
-    {role:"assistant",text:`Hi! 👋 I'm your AI tutor for **${c.title}**. Ask me anything — type or tap the mic to talk — and I'll explain, give examples, or help if you're stuck. What would you like to know?`}
-  ]);
-  const [input,setInput]=useState("");
-  const [loading,setLoading]=useState(false);
-  const [error,setError]=useState(null);
-  const [voiceOn,setVoiceOn]=useState(true);
-  const [speaking,setSpeaking]=useState(false);
-  const [listening,setListening]=useState(false);
-  const [voiceSupport,setVoiceSupport]=useState({stt:false,tts:false});
-  const scrollRef=useRef(null);
-  const recogRef=useRef(null);
+  const steps=Array.from({length:c.steps},(_,i)=>({
+    n:i+1, head:STEP_HEADS[i%STEP_HEADS.length],
+  }));
+  const [done,setDone]=useState(new Set());
+  const pct=Math.round((done.size/steps.length)*100);
+  const allDone=done.size===steps.length;
 
-  // Detect browser voice support
-  useEffect(()=>{
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    setVoiceSupport({stt:!!SR,tts:!!window.speechSynthesis});
-  },[]);
-
-  useEffect(()=>{
-    if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight;
-  },[messages,loading]);
-
-  // Stop any speech / listening when modal unmounts
-  useEffect(()=>{
-    return ()=>{
-      if(window.speechSynthesis) window.speechSynthesis.cancel();
-      if(recogRef.current) { try{recogRef.current.stop();}catch(e){} }
-    };
-  },[]);
-
-  function speak(text){
-    if(!voiceSupport.tts||!voiceOn) return;
-    window.speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(cleanForSpeech(text));
-    u.rate=1; u.pitch=1.02; u.volume=1;
-    u.onstart=()=>setSpeaking(true);
-    u.onend=()=>setSpeaking(false);
-    u.onerror=()=>setSpeaking(false);
-    window.speechSynthesis.speak(u);
+  function toggle(n){
+    setDone(d=>{
+      const nd=new Set(d);
+      nd.has(n)?nd.delete(n):nd.add(n);
+      return nd;
+    });
   }
-  function stopSpeaking(){
-    if(window.speechSynthesis) window.speechSynthesis.cancel();
-    setSpeaking(false);
-  }
-  function toggleVoice(){
-    if(voiceOn) stopSpeaking();
-    setVoiceOn(v=>!v);
-  }
-
-  function startListening(){
-    if(!voiceSupport.stt||loading) return;
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    const recog=new SR();
-    recog.lang="en-US"; recog.continuous=false; recog.interimResults=false;
-    recog.onstart=()=>setListening(true);
-    recog.onerror=()=>setListening(false);
-    recog.onend=()=>setListening(false);
-    recog.onresult=(e)=>{
-      const transcript=e.results[0][0].transcript;
-      send(transcript);
-    };
-    recogRef.current=recog;
-    try{recog.start();}catch(e){setListening(false);}
-  }
-  function stopListening(){
-    if(recogRef.current){ try{recogRef.current.stop();}catch(e){} }
-    setListening(false);
-  }
-
-  async function send(text){
-    const q=(text??input).trim();
-    if(!q||loading) return;
-    setInput("");
-    setError(null);
-    stopSpeaking();
-    const newMsgs=[...messages,{role:"user",text:q}];
-    setMessages(newMsgs);
-    setLoading(true);
-    try{
-      const history=newMsgs.map(m=>({role:m.role,content:m.text}));
-      const payload={
-        model:"claude-sonnet-4-6",
-        max_tokens:1000,
-        system:`You are a warm, patient, encouraging tutor inside "LearnHub", helping a learner understand the course "${c.title}" (category: ${cat.label}). The course covers these steps: ${steps.join(", ")}. Explain things in plain, simple language with short concrete examples. Keep replies conversational and concise (suited for a small chat widget and for being read aloud — 2 to 5 short sentences, or a short numbered list). Never use complicated jargon without explaining it. If the learner seems stuck, break the idea into smaller pieces. If asked something unrelated to this course or to learning, gently steer back to the topic.`,
-        messages:history,
-      };
-
-      // Try calling Anthropic directly first (this works inside the Claude.ai
-      // preview/artifact sandbox, which injects auth automatically).
-      // If that fails — e.g. because this is running on your own deployed
-      // domain with no injected key — fall back to our own backend proxy
-      // at /api/tutor, which holds the real API key securely server-side.
-      let data;
-      try{
-        const direct=await fetch("https://api.anthropic.com/v1/messages",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify(payload),
-        });
-        if(!direct.ok) throw new Error("direct call failed");
-        data=await direct.json();
-      }catch(directErr){
-        const proxied=await fetch("/api/tutor",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify(payload),
-        });
-        if(!proxied.ok){
-          const errBody=await proxied.json().catch(()=>({}));
-          throw new Error(errBody.error||"proxy call failed");
-        }
-        data=await proxied.json();
-      }
-      const textOut=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
-      const finalText=textOut||"Sorry, I didn't quite catch that — could you rephrase your question?";
-      setMessages(m=>[...m,{role:"assistant",text:finalText}]);
-      speak(finalText);
-    }catch(e){
-      setError("Something went wrong reaching the AI tutor. Please try again.");
-      const errText="⚠️ I had trouble responding just now. Could you try asking again?";
-      setMessages(m=>[...m,{role:"assistant",text:errText}]);
-    }finally{
-      setLoading(false);
-    }
-  }
-
-  const suggestions=["Explain step 1 again, simply","Give me a real example","I'm stuck — help me","Quiz me on this topic"];
 
   return (
     <div onClick={e=>e.target===e.currentTarget&&onClose()}
       style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",
         backdropFilter:"blur(6px)",display:"flex",alignItems:"center",
         justifyContent:"center",zIndex:1000,padding:16,animation:"fadeIn .2s ease"}}>
-      <div style={{background:"white",borderRadius:22,width:"100%",maxWidth:560,
-        height:"min(680px, 92vh)",overflow:"hidden",boxShadow:"0 40px 80px rgba(0,0,0,.3)",
+      <div style={{background:"white",borderRadius:22,width:"100%",maxWidth:520,
+        height:"min(680px,92vh)",overflow:"hidden",
+        boxShadow:"0 40px 80px rgba(0,0,0,.3)",
         display:"flex",flexDirection:"column",animation:"fadeUp .3s ease"}}>
 
         {/* Header */}
         <div style={{background:`linear-gradient(135deg,${cat.color},${cat.color}aa)`,
-          padding:"18px 22px",flexShrink:0}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-            <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-              <div style={{position:"relative",flexShrink:0}}>
-                {speaking && [0,1].map(ring=>(
-                  <div key={ring} style={{
-                    position:"absolute",inset:-ring*6-4,borderRadius:"50%",
-                    border:"2px solid rgba(255,255,255,.5)",
-                    animation:`pulse 1.2s ease-in-out infinite`,animationDelay:`${ring*0.2}s`,
-                  }}/>
-                ))}
-                <div style={{
-                  width:42,height:42,background:"rgba(255,255,255,.2)",borderRadius:12,
-                  display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,
-                  position:"relative",
-                }}>🤖</div>
-              </div>
+          padding:"20px 22px",flexShrink:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              <div style={{width:40,height:40,background:"rgba(255,255,255,.2)",
+                borderRadius:10,display:"flex",alignItems:"center",
+                justifyContent:"center",fontSize:20,flexShrink:0}}>{cat.icon}</div>
               <div>
                 <div style={{fontSize:11,color:"rgba(255,255,255,.75)",fontWeight:800,
-                  letterSpacing:"1px",marginBottom:3,display:"flex",alignItems:"center",gap:6}}>
-                  AI TUTOR · LIVE CHAT
-                  {speaking && <span style={{display:"flex",gap:2}}>
-                    {[0,1,2].map(b=>(
-                      <span key={b} style={{width:3,height:9,background:"#fff",borderRadius:2,
-                        animation:"pulse .6s ease-in-out infinite",animationDelay:`${b*0.12}s`}}/>
-                    ))}
-                  </span>}
-                </div>
-                <div style={{fontSize:16,fontWeight:900,color:"white",lineHeight:1.25}}>{c.title}</div>
-                <div style={{fontSize:12,color:"rgba(255,255,255,.75)",marginTop:2}}>{cat.icon} {cat.label}</div>
+                  letterSpacing:"1px",marginBottom:3}}>YOUR LESSON</div>
+                <div style={{fontSize:15,fontWeight:900,color:"white",lineHeight:1.25}}>{c.title}</div>
+                <div style={{fontSize:12,color:"rgba(255,255,255,.75)",marginTop:2}}>{cat.label}</div>
               </div>
             </div>
-            <div style={{display:"flex",gap:8,flexShrink:0}}>
-              {voiceSupport.tts && (
-                <button onClick={toggleVoice} title={voiceOn?"Mute voice replies":"Enable voice replies"} style={{
-                  background:"rgba(255,255,255,.2)",border:"none",
-                  color:"white",width:30,height:30,borderRadius:8,cursor:"pointer",fontSize:14,
-                  fontFamily:"inherit",
-                }}>{voiceOn?"🔊":"🔇"}</button>
-              )}
-              <button onClick={onClose} style={{background:"rgba(255,255,255,.2)",border:"none",
-                color:"white",width:30,height:30,borderRadius:8,cursor:"pointer",fontSize:18,
-                fontFamily:"inherit"}}>×</button>
-            </div>
+            <button onClick={onClose} style={{background:"rgba(255,255,255,.2)",border:"none",
+              color:"white",width:30,height:30,borderRadius:8,cursor:"pointer",fontSize:18,
+              fontFamily:"inherit"}}>×</button>
           </div>
-        </div>
-
-        {/* Lesson steps strip */}
-        <div style={{display:"flex",gap:6,overflowX:"auto",padding:"10px 16px",
-          background:"#f8fafc",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
-          {steps.map((s,i)=>(
-            <button key={i} onClick={()=>send(`Can you explain "${s}" in this course, step by step?`)}
-              style={{
-                flexShrink:0,background:"white",border:`1px solid ${cat.color}33`,
-                borderRadius:20,padding:"5px 12px",fontSize:11,fontWeight:700,
-                color:cat.color,cursor:"pointer",whiteSpace:"nowrap",
-              }}>{i+1}. {s}</button>
-          ))}
-        </div>
-
-        {/* Chat messages */}
-        <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"18px 18px 6px",
-          display:"flex",flexDirection:"column",gap:14,background:"#fcfcfb"}}>
-          {messages.map((m,i)=>{
-            const isLast=i===messages.length-1;
-            const isSpeakingThis=isLast&&m.role==="assistant"&&speaking;
-            return (
-            <div key={i} style={{
-              display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",
-              animation:"fadeUp .25s ease",
-            }}>
-              {m.role==="assistant" && (
-                <div style={{width:28,height:28,background:cat.bg,borderRadius:8,
-                  display:"flex",alignItems:"center",justifyContent:"center",
-                  fontSize:14,marginRight:8,flexShrink:0,
-                  boxShadow:isSpeakingThis?`0 0 0 3px ${cat.color}44`:"none",
-                  transition:"box-shadow .2s",
-                }}>🤖</div>
-              )}
-              <div style={{
-                maxWidth:"76%",padding:"10px 14px",borderRadius:14,
-                background:m.role==="user"?`linear-gradient(135deg,${cat.color},${cat.color}cc)`:"white",
-                color:m.role==="user"?"white":"#1e293b",
-                fontSize:14,lineHeight:1.6,
-                boxShadow:m.role==="user"?"none":"0 2px 8px rgba(0,0,0,.06)",
-                border:m.role==="user"?"none":isSpeakingThis?`1px solid ${cat.color}55`:"1px solid #f1f5f9",
-                whiteSpace:"pre-wrap",
-              }}>{m.text}
-                {m.role==="assistant" && voiceSupport.tts && (
-                  <button onClick={()=>isSpeakingThis?stopSpeaking():speak(m.text)} style={{
-                    marginLeft:8,background:"none",border:"none",cursor:"pointer",
-                    fontSize:12,opacity:0.5,verticalAlign:"middle",
-                  }} title={isSpeakingThis?"Stop":"Read aloud"}>{isSpeakingThis?"⏸":"🔊"}</button>
-                )}
-              </div>
-            </div>
-          );})}
-          {loading && (
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <div style={{width:28,height:28,background:cat.bg,borderRadius:8,
-                display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>🤖</div>
-              <div style={{display:"flex",gap:4,padding:"12px 14px",background:"white",
-                borderRadius:14,border:"1px solid #f1f5f9"}}>
-                {[0,1,2].map(d=>(
-                  <div key={d} style={{
-                    width:6,height:6,borderRadius:"50%",background:cat.color,
-                    animation:"pulse 1s ease-in-out infinite",animationDelay:`${d*0.15}s`,
-                  }}/>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Quick suggestions */}
-        <div style={{display:"flex",gap:6,padding:"10px 16px 0",flexWrap:"wrap",flexShrink:0}}>
-          {suggestions.map(s=>(
-            <button key={s} onClick={()=>send(s)} disabled={loading} style={{
-              background:cat.bg,border:"none",borderRadius:16,padding:"5px 12px",
-              fontSize:11,fontWeight:700,color:cat.color,cursor:loading?"default":"pointer",
-              opacity:loading?0.5:1,
-            }}>{s}</button>
-          ))}
-        </div>
-
-        {/* Input row */}
-        <div style={{display:"flex",gap:8,padding:"12px 16px",borderTop:"1px solid #f1f5f9",flexShrink:0,alignItems:"center"}}>
-          {voiceSupport.stt && (
-            <button
-              onClick={listening?stopListening:startListening}
-              disabled={loading}
-              title={listening?"Stop listening":"Speak your question"}
-              style={{
-                position:"relative",flexShrink:0,
-                width:42,height:42,borderRadius:12,border:"none",cursor:loading?"default":"pointer",
-                background:listening?"#ef4444":cat.bg,
-                color:listening?"white":cat.color,
-                fontSize:17,display:"flex",alignItems:"center",justifyContent:"center",
-                opacity:loading?0.5:1,
-              }}>
-              {listening && [0,1].map(ring=>(
-                <div key={ring} style={{
-                  position:"absolute",inset:-4-ring*5,borderRadius:"50%",
-                  border:"2px solid #ef444466",
-                  animation:"pulse 1s ease-in-out infinite",animationDelay:`${ring*0.2}s`,
-                }}/>
-              ))}
-              {listening?"⏹":"🎙️"}
-            </button>
-          )}
-          <input
-            value={input}
-            onChange={e=>setInput(e.target.value)}
-            onKeyDown={e=>{if(e.key==="Enter"&&!loading) send();}}
-            placeholder={listening?"🎙️ Listening… speak now":"Ask your AI tutor anything about this course…"}
-            disabled={listening}
-            style={{
-              flex:1,padding:"11px 14px",borderRadius:12,border:"1.5px solid #e2e8f0",
-              fontSize:14,color:"#1e293b",background:listening?"#fef2f2":"#f8fafc",
-              fontFamily:"'Nunito',sans-serif",
+          {/* Progress bar */}
+          <div style={{background:"rgba(255,255,255,.2)",borderRadius:20,height:8,overflow:"hidden"}}>
+            <div style={{
+              height:"100%",borderRadius:20,
+              background:"white",
+              width:`${pct}%`,
+              transition:"width .4s ease",
             }}/>
-          <button onClick={()=>send()} disabled={loading||!input.trim()} style={{
-            background:loading||!input.trim()?"#cbd5e1":`linear-gradient(135deg,${cat.color},${cat.color}cc)`,
-            color:"white",border:"none",borderRadius:12,padding:"0 20px",height:42,
-            fontSize:14,fontWeight:800,cursor:loading||!input.trim()?"default":"pointer",
-            fontFamily:"inherit",flexShrink:0,
-          }}>Send</button>
-        </div>
-        {!voiceSupport.stt && (
-          <div style={{textAlign:"center",fontSize:11,color:"#94a3b8",padding:"0 16px 10px"}}>
-            🎙️ Voice input isn't supported in this browser — try Chrome or Edge for talking to your tutor.
           </div>
-        )}
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:6}}>
+            <span style={{color:"rgba(255,255,255,.8)",fontSize:12,fontWeight:700}}>
+              {done.size}/{steps.length} steps completed
+            </span>
+            <span style={{color:"rgba(255,255,255,.9)",fontSize:12,fontWeight:800}}>
+              {pct}%
+            </span>
+          </div>
+        </div>
+
+        {/* Steps list */}
+        <div style={{flex:1,overflowY:"auto",padding:"16px 18px",background:"#f8fafc"}}>
+          {allDone && (
+            <div style={{
+              background:`linear-gradient(135deg,${cat.color},${cat.color}cc)`,
+              borderRadius:14,padding:"18px 20px",
+              textAlign:"center",marginBottom:16,
+              animation:"fadeUp .4s ease",
+            }}>
+              <div style={{fontSize:32,marginBottom:6}}>🎉</div>
+              <div style={{fontSize:17,fontWeight:900,color:"white",marginBottom:4}}>
+                Course Complete!
+              </div>
+              <div style={{fontSize:13,color:"rgba(255,255,255,.85)"}}>
+                You've finished all steps of {c.title}
+              </div>
+            </div>
+          )}
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {steps.map(s=>{
+              const isDone=done.has(s.n);
+              return (
+                <div key={s.n} onClick={()=>toggle(s.n)}
+                  style={{
+                    background:"white",borderRadius:12,padding:"14px 16px",
+                    display:"flex",alignItems:"center",gap:12,cursor:"pointer",
+                    border:`1.5px solid ${isDone?cat.color+"55":"#e2e8f0"}`,
+                    boxShadow:"0 1px 4px rgba(0,0,0,.04)",
+                    transition:"all .18s ease",
+                    opacity:isDone?0.85:1,
+                  }}>
+                  <div style={{
+                    width:28,height:28,borderRadius:8,flexShrink:0,
+                    background:isDone?cat.color:cat.color+"18",
+                    border:`2px solid ${isDone?cat.color:cat.color+"44"}`,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontSize:14,transition:"all .2s",
+                  }}>{isDone?"✓":s.n}</div>
+                  <div style={{flex:1}}>
+                    <div style={{
+                      fontSize:14,fontWeight:800,
+                      color:isDone?"#94a3b8":"#0f172a",
+                      textDecoration:isDone?"line-through":"none",
+                      transition:"all .2s",
+                    }}>{s.head}</div>
+                    <div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>
+                      Tap to mark {isDone?"incomplete":"complete"}
+                    </div>
+                  </div>
+                  {isDone&&<span style={{fontSize:18}}>✅</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{padding:"14px 18px",borderTop:"1px solid #f1f5f9",
+          background:"white",flexShrink:0,
+          display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{fontSize:13,color:"#64748b"}}>
+            Tap each step as you complete it
+          </div>
+          <button onClick={()=>{setDone(new Set());}} style={{
+            background:"#f1f5f9",border:"none",borderRadius:9,
+            padding:"7px 14px",fontSize:12,fontWeight:700,
+            color:"#64748b",cursor:"pointer",
+          }}>↺ Reset</button>
+        </div>
       </div>
     </div>
   );
 }
+
+
+
 
 /* ══════════════════════════════════════════════
    MAIN APP
@@ -931,7 +741,7 @@ export default function App() {
   const [pg,setPg]=useState(1);
   const [buying,setBuying]=useState(null);
   const [owned,setOwned]=useState(new Set());
-  const [tutoring,setTutoring]=useState(null);
+  const [viewing,setViewing]=useState(null);  // course being viewed in LessonModal
   const [section,setSection]=useState("home");
   const [subBanner,setSubBanner]=useState(null);
   const [trial,setTrial]=useState(null); // {start:timestamp, courses:Set}
@@ -969,7 +779,7 @@ export default function App() {
       try{localStorage.setItem("learnhub_trial",JSON.stringify({start:t.start,courses:[...nc]}));}catch(e){}
       return{...t,courses:nc};
     });
-    setTutoring(course);
+    setViewing(course);
   }
 
   // After returning from Stripe Checkout, confirm the subscription is
@@ -982,7 +792,7 @@ export default function App() {
     const previewCode=params.get("preview");
 
     // OWNER TESTING UNLOCK — visit yoursite.com/?preview=learnhub2026
-    // to instantly unlock every course's AI Tutor for testing, with no
+    // to instantly unlock every course for testing, with no
     // payment and no Stripe checkout at all. Change "learnhub2026" to
     // your own secret word below if you'd like. This is meant only for
     // you to test with — don't share this link publicly.
@@ -1198,9 +1008,9 @@ export default function App() {
                 fontSize:17,color:"rgba(255,255,255,.85)",lineHeight:1.7,
                 marginBottom:32,maxWidth:460,
               }}>
-                Chat live with an AI Tutor — by typing or talking — on Excel, Word, Python,
-                Photoshop, <strong style={{color:"#fbbf24"}}>ChatGPT, Claude, Kling AI</strong> &amp; more.
-                Plain language, real answers, available the moment you ask — from day one.
+                Learn any skill on Excel, Word, Python,
+                Photoshop, <strong style={{color:"#fbbf24"}}>ChatGPT, Claude, Kling AI</strong> &amp; more —
+                plain language, step-by-step lessons, available the moment you subscribe.
               </p>
               <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
                 <button onClick={()=>setSection("courses")} style={{
@@ -1429,7 +1239,7 @@ export default function App() {
             {[
               {num:"01",icon:"🔍",title:"Find Your Course",desc:"Browse 1,200+ guides across Excel, Word, Python, ChatGPT, Claude, Photoshop and more. Search or filter by category."},
               {num:"02",icon:"💳",title:"Subscribe for $5/mo",desc:"Less than a streaming subscription. Instant checkout with your card, cancel anytime."},
-              {num:"03",icon:"💬",title:"Chat, Talk & Learn",desc:"Open the live AI Tutor — type or talk and get real answers out loud, for as long as you need."},
+              {num:"03",icon:"📖",title:"Learn Step by Step",desc:"Open your lesson, tick off each step as you go, and track your progress — at your own pace, anytime."},
             ].map((s,i)=>(
               <div key={i} style={{
                 flex:"1 1 260px",background:"white",borderRadius:20,padding:"32px 28px",
@@ -1544,7 +1354,7 @@ export default function App() {
                   {icon:"💵",t:"Less than a streaming plan",d:"$5/month per topic — try something new without the cost of a full course or bootcamp."},
                   {icon:"⏱",t:"15–40 minutes per session",d:"Short enough to finish on a lunch break, focused enough to actually stick."},
                   {icon:"🗣",t:"Plain language, always",d:"No assumed knowledge, no unexplained jargon — written so it just makes sense."},
-                  {icon:"🤖",t:"AI Tutor on demand",d:"Stuck on a step? Ask the live AI tutor by typing or talking — get an answer immediately."},
+                  {icon:"📖",t:"Step-by-step lessons",d:"Every course broken into clear numbered steps you tick off as you go — at your own pace."},
                   {icon:"🔓",t:"Cancel anytime",d:"Subscribe to only the courses you need — drop one whenever you're done, no questions asked."},
                   {icon:"🔄",t:"1,200+ topics, one place",d:"Stop hunting across YouTube and forums — find the exact skill you need here."},
                 ].map(f=>(
@@ -1611,14 +1421,14 @@ export default function App() {
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16}}>
             {topCourses.map((c,i)=>(
-              <Card key={c.id} c={c} onBuy={setBuying} owned={owned.has(c.id)} delay={i*60} onTutor={setTutoring}
+              <Card key={c.id} c={c} onBuy={setBuying} owned={owned.has(c.id)} delay={i*60} onTutor={setViewing}
                 inTrial={trial&&trial.courses.has(c.id)} canTrial={canTrial&&!owned.has(c.id)&&!(trial&&trial.courses.has(c.id))}
                 onTrial={addTrialCourse} trialActive={trialActive} trialDaysLeft={trialDaysLeft}/>
             ))}
           </div>
         </div>
 
-        {/* ── WHAT YOU GET (AI Tutor Preview) ─────────────── */}
+        {/* ── WHAT YOU GET ─────────────────────────────── */}
         <div style={{background:"linear-gradient(135deg,#1e40af,#3b82f6)",padding:"64px 20px"}}>
           <div style={{maxWidth:1100,margin:"0 auto",
             display:"flex",gap:48,alignItems:"center",flexWrap:"wrap"}}>
@@ -1631,18 +1441,18 @@ export default function App() {
                 letterSpacing:"1px",marginBottom:20,
               }}>✨ WHAT YOU GET</div>
               <h2 style={{fontSize:"clamp(22px,4vw,38px)",fontWeight:900,lineHeight:1.15,marginBottom:16}}>
-                Learn by Asking, Not Just Reading
+                Learn at Your Own Pace
               </h2>
               <p style={{fontSize:16,opacity:.85,lineHeight:1.7,marginBottom:28}}>
-                Open the live AI Tutor and ask anything — by typing or talking
-                out loud. It already knows your course, so you never have to
-                re-explain context, and there's no limit on how many questions you ask.
+                Every course is broken into clear, numbered steps. Tick each one
+                off as you complete it, track your progress, and come back
+                anytime — no pressure, no time limit.
               </p>
               {[
-                {icon:"💬",t:"Live Conversation","d":"Ask questions by typing or speaking — get real answers instantly"},
-                {icon:"🎙️",t:"Talks Back Too","d":"Hear every answer read aloud, or mute it and just read"},
-                {icon:"🧠",t:"Knows Your Course","d":"Already familiar with every step, so you never start from zero"},
-                {icon:"♾️",t:"Unlimited Questions","d":"Keep asking until it actually clicks — no limit, ever"},
+                {icon:"📖",t:"Step-by-Step Lessons","d":"Every course broken into clear numbered steps"},
+                {icon:"✅",t:"Progress Tracking","d":"Tick off steps as you complete them"},
+                {icon:"🔁",t:"Go at Your Own Pace","d":"Pause and come back anytime — no expiry"},
+                {icon:"🔓",t:"Cancel Anytime","d":"No long-term contract, cancel whenever you like"},
               ].map(f=>(
                 <div key={f.t} style={{display:"flex",gap:14,marginBottom:16,alignItems:"flex-start"}}>
                   <div style={{width:40,height:40,background:"rgba(255,255,255,.15)",
@@ -1655,59 +1465,45 @@ export default function App() {
                 </div>
               ))}
             </div>
-            {/* Right: mock AI Tutor chat preview */}
+            {/* Right: mock lesson viewer preview */}
             <div style={{flex:"1 1 300px",display:"flex",justifyContent:"center"}}>
               <div className="hero-float" style={{
                 background:"white",borderRadius:20,overflow:"hidden",
-                boxShadow:"0 24px 64px rgba(0,0,0,.3)",maxWidth:340,width:"100%",
+                boxShadow:"0 24px 64px rgba(0,0,0,.3)",maxWidth:320,width:"100%",
               }}>
-                {/* Chat header mock */}
-                <div style={{
-                  background:"linear-gradient(135deg,#16a34a,#15803d)",
-                  padding:"18px 20px",display:"flex",alignItems:"center",gap:12,
-                }}>
-                  <div style={{width:38,height:38,background:"rgba(255,255,255,.2)",borderRadius:10,
-                    display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🤖</div>
-                  <div>
-                    <div style={{fontSize:10,color:"rgba(255,255,255,.75)",fontWeight:800,letterSpacing:"1px"}}>
-                      AI TUTOR · LIVE CHAT
-                    </div>
-                    <div style={{fontSize:15,fontWeight:900,color:"white"}}>VLOOKUP Made Simple</div>
+                <div style={{background:"linear-gradient(135deg,#16a34a,#15803d)",padding:"18px 20px"}}>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,.75)",fontWeight:800,letterSpacing:"1px",marginBottom:4}}>YOUR LESSON</div>
+                  <div style={{fontSize:16,fontWeight:900,color:"white"}}>VLOOKUP Made Simple</div>
+                  <div style={{marginTop:10,background:"rgba(255,255,255,.2)",borderRadius:20,height:6,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:"60%",background:"white",borderRadius:20}}/>
                   </div>
+                  <div style={{color:"rgba(255,255,255,.8)",fontSize:11,marginTop:5}}>4/7 steps complete · 57%</div>
                 </div>
-                {/* Chat bubbles mock */}
-                <div style={{padding:"16px 18px",display:"flex",flexDirection:"column",gap:10,background:"#fcfcfb"}}>
-                  <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
-                    <div style={{width:24,height:24,background:"#dcfce7",borderRadius:7,
-                      display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,flexShrink:0}}>🤖</div>
-                    <div style={{background:"white",borderRadius:12,padding:"9px 12px",fontSize:12.5,
-                      color:"#1e293b",border:"1px solid #f1f5f9",lineHeight:1.5,maxWidth:"82%"}}>
-                      Hi! I'm your AI tutor for VLOOKUP. Ask me anything — type or talk!
-                    </div>
+                {[
+                  {n:1,t:"Getting Started",done:true},
+                  {n:2,t:"Step-by-Step Walkthrough",done:true},
+                  {n:3,t:"Hands-On Practice",done:true},
+                  {n:4,t:"Common Pitfalls",done:true},
+                  {n:5,t:"Pro Tips & Shortcuts",done:false},
+                ].map(s=>(
+                  <div key={s.n} style={{
+                    padding:"11px 16px",borderBottom:"1px solid #f1f5f9",
+                    display:"flex",alignItems:"center",gap:10,
+                  }}>
+                    <div style={{
+                      width:24,height:24,borderRadius:6,flexShrink:0,
+                      background:s.done?"#16a34a":"#f1f5f9",
+                      display:"flex",alignItems:"center",justifyContent:"center",
+                      fontSize:12,fontWeight:900,color:s.done?"white":"#94a3b8",
+                    }}>{s.done?"✓":s.n}</div>
+                    <div style={{fontSize:13,fontWeight:700,
+                      color:s.done?"#94a3b8":"#0f172a",
+                      textDecoration:s.done?"line-through":"none"}}>{s.t}</div>
+                    {s.done&&<span style={{marginLeft:"auto",fontSize:14}}>✅</span>}
                   </div>
-                  <div style={{display:"flex",justifyContent:"flex-end"}}>
-                    <div style={{background:"linear-gradient(135deg,#16a34a,#15803d)",color:"white",
-                      borderRadius:12,padding:"9px 12px",fontSize:12.5,maxWidth:"75%"}}>
-                      🎙️ Can you explain step 3 again?
-                    </div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
-                    <div style={{width:24,height:24,background:"#dcfce7",borderRadius:7,
-                      display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,flexShrink:0}}>🤖</div>
-                    <div style={{background:"white",borderRadius:12,padding:"9px 12px",fontSize:12.5,
-                      color:"#1e293b",border:"1px solid #f1f5f9",lineHeight:1.5,maxWidth:"82%"}}>
-                      Sure! Step 3 matches a value across columns — think of it as a lookup table. 🔊
-                    </div>
-                  </div>
-                </div>
-                {/* Input mock */}
-                <div style={{padding:"12px 16px",borderTop:"1px solid #f1f5f9",display:"flex",gap:8,alignItems:"center"}}>
-                  <div style={{width:34,height:34,background:"#dcfce7",borderRadius:9,
-                    display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>🎙️</div>
-                  <div style={{flex:1,background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:10,
-                    padding:"8px 12px",fontSize:12,color:"#94a3b8"}}>Ask your AI tutor anything…</div>
-                  <div style={{background:"linear-gradient(135deg,#16a34a,#15803d)",color:"white",
-                    borderRadius:9,padding:"8px 14px",fontSize:12,fontWeight:800}}>Send</div>
+                ))}
+                <div style={{padding:"12px 16px",background:"#f8fafc",textAlign:"center"}}>
+                  <span style={{fontSize:13,fontWeight:700,color:"#16a34a"}}>✓ Subscribed · $5/mo</span>
                 </div>
               </div>
             </div>
@@ -1779,7 +1575,7 @@ export default function App() {
               }}>Browse All Courses →</button>
             </div>
             <div style={{display:"flex",gap:16,justifyContent:"center",flexWrap:"wrap"}}>
-              {["💬 Live AI Tutor","🎙️ Voice Chat","🔒 Secure Payment","♾️ Unlimited Questions","💵 $5/mo per course"].map(t=>(
+              {["📖 Step-by-Step Lessons","✅ Progress Tracking","🔒 Secure Payment","🔁 Cancel Anytime","💵 $5/mo per course"].map(t=>(
                 <span key={t} style={{color:"rgba(255,255,255,.55)",fontSize:13,fontWeight:600}}>{t}</span>
               ))}
             </div>
@@ -1873,7 +1669,7 @@ export default function App() {
             : <div style={{display:"grid",
                 gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16}}>
                 {pageItems.map((c,i)=>(
-                  <Card key={c.id} c={c} onBuy={setBuying} owned={owned.has(c.id)} delay={i*40} onTutor={setTutoring}
+                  <Card key={c.id} c={c} onBuy={setBuying} owned={owned.has(c.id)} delay={i*40} onTutor={setViewing}
                     inTrial={trial&&trial.courses.has(c.id)} canTrial={canTrial&&!owned.has(c.id)&&!(trial&&trial.courses.has(c.id))}
                     onTrial={addTrialCourse} trialActive={trialActive} trialDaysLeft={trialDaysLeft}/>
                 ))}
@@ -1912,9 +1708,9 @@ export default function App() {
         <PayModal c={buying} onClose={()=>setBuying(null)}/>
       )}
 
-      {/* AI Tutor Modal */}
-      {tutoring && (
-        <TutorModal c={tutoring} onClose={()=>setTutoring(null)}/>
+      {/* Lesson Viewer Modal */}
+      {viewing && (
+        <LessonModal c={viewing} onClose={()=>setViewing(null)}/>
       )}
 
       {/* Post-checkout confirmation (after returning from Stripe) */}
@@ -1932,13 +1728,13 @@ export default function App() {
                 You're Subscribed!
               </div>
               <div style={{color:"#64748b",fontSize:14,marginBottom:22}}>
-                $5/month for <strong>{subBanner.title}</strong> — chat live with your AI Tutor anytime.
+                $5/month for <strong>{subBanner.title}</strong> — start your lesson now!
               </div>
-              <button onClick={()=>{setTutoring(subBanner.course);setSubBanner(null);}} style={{
+              <button onClick={()=>{setViewing(subBanner.course);setSubBanner(null);}} style={{
                 width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",
                 color:"white",border:"none",borderRadius:12,padding:"13px",
                 fontSize:15,fontWeight:800,cursor:"pointer",marginBottom:10,fontFamily:"inherit",
-              }}>💬 Start Chatting with AI Tutor</button>
+              }}>📖 Start Your Lesson</button>
               <button onClick={()=>setSubBanner(null)} style={{
                 background:"none",border:"none",color:"#94a3b8",cursor:"pointer",
                 fontSize:13,fontFamily:"inherit",
